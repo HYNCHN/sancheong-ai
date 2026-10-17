@@ -9,6 +9,7 @@
  *   NEIS_KEY   : 나이스 교육정보 개방포털 인증키
  *   DATA_KEY   : 공공데이터포털 일반 인증키 (Decoding 키 권장, Encoding 키도 동작)
  *   SHEET_URL  : 관리 시트 읽기용 Apps Script 웹 앱 주소
+ *   ADMIN_PASSWORD : 관리자 페이지(/admin.html) 비밀번호
  */
 
 const NEIS = 'https://open.neis.go.kr/hub/';
@@ -78,7 +79,7 @@ function json(data, status = 200, maxAge = 300) {
     status,
     headers: {
       'content-type': 'application/json; charset=utf-8',
-      'cache-control': status === 200 ? `public, max-age=${maxAge}` : 'no-store',
+      'cache-control': status === 200 && maxAge > 0 ? `public, max-age=${maxAge}` : 'no-store',
     },
   });
 }
@@ -446,9 +447,73 @@ export function buildConfig(sheet, k = kstNow()) {
   };
 }
 
+/* ---------------- 익명 이용 통계 ---------------- */
+
+/**
+ * 날짜·학교·학년별 '그날 처음 연 기기 수'만 셉니다.
+ * 기기 번호, 접속 주소(IP), 이름 같은 것은 저장하지 않습니다.
+ */
+export class Stats {
+  constructor(ctx) {
+    this.sql = ctx.storage.sql;
+    this.sql.exec(`CREATE TABLE IF NOT EXISTS hits (
+      day TEXT NOT NULL, school TEXT NOT NULL, grade INTEGER NOT NULL, n INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (day, school, grade))`);
+  }
+  async fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === '/hit') {
+      const { day, school, grade } = await request.json();
+      this.sql.exec(`INSERT INTO hits (day, school, grade, n) VALUES (?, ?, ?, 1)
+        ON CONFLICT (day, school, grade) DO UPDATE SET n = n + 1`, day, school, grade);
+      return new Response('ok');
+    }
+    if (url.pathname === '/rows') {
+      const from = url.searchParams.get('from') || '00000000';
+      const rows = this.sql.exec('SELECT day, school, grade, n FROM hits WHERE day >= ? ORDER BY day', from).toArray();
+      return Response.json(rows);
+    }
+    return new Response('not found', { status: 404 });
+  }
+}
+
+const statsStub = (env) => env.STATS.get(env.STATS.idFromName('main'));
+
+async function recordHit(env, body) {
+  if (!env.STATS) return { ok: false };
+  const school = String(body?.school || '');
+  const grade = parseInt(body?.grade);
+  if (!/^\d{4,10}$/.test(school) || !(grade >= 1 && grade <= 6)) throw Object.assign(new Error('잘못된 값'), { status: 400 });
+  const schools = await getSchools(env).catch(() => null);
+  if (schools && !schools.some((x) => x.code === school)) throw Object.assign(new Error('산청 학교가 아니에요'), { status: 400 });
+  await statsStub(env).fetch('https://stats/hit', { method: 'POST', body: JSON.stringify({ day: kstNow().ymd, school, grade }) });
+  return { ok: true };
+}
+
+/** 비밀번호 비교 (길이가 달라도 같은 시간이 걸리게) */
+function samePassword(a, b) {
+  const x = new TextEncoder().encode(String(a)), y = new TextEncoder().encode(String(b));
+  let diff = x.length ^ y.length;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) diff |= (x[i] || 0) ^ (y[i] || 0);
+  return diff === 0;
+}
+
+async function adminStats(env, request, days) {
+  if (!env.ADMIN_PASSWORD) throw Object.assign(new Error('ADMIN_PASSWORD가 설정되지 않았어요'), { status: 503 });
+  const given = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '');
+  if (!samePassword(given, env.ADMIN_PASSWORD)) throw Object.assign(new Error('비밀번호가 맞지 않아요'), { status: 401 });
+  if (!env.STATS) throw Object.assign(new Error('통계 저장소가 연결되지 않았어요'), { status: 503 });
+  const n = Math.min(Math.max(parseInt(days) || 30, 1), 366);
+  const from = ymd(addDays(parseDate(kstNow().ymd), -(n - 1)));
+  const rows = await (await statsStub(env).fetch(`https://stats/rows?from=${from}`)).json();
+  const schools = await getSchools(env).catch(() => []);
+  const names = Object.fromEntries(schools.map((x) => [x.code, x.name]));
+  return { from, to: kstNow().ymd, days: n, rows: rows.map((r) => ({ ...r, name: names[r.school] || r.school })) };
+}
+
 /* ---------------- 주소 처리 ---------------- */
 
-async function handleApi(url, env) {
+async function handleApi(url, env, request) {
   const p = url.searchParams;
   const path = url.pathname.replace(/\/+$/, '');
   const need = (...names) => {
@@ -462,7 +527,7 @@ async function handleApi(url, env) {
 
   switch (path) {
     case '/api/health':
-      return json({ ok: true, neis: !!env.NEIS_KEY, data: !!env.DATA_KEY, sheet: !!env.SHEET_URL, now: kstNow() }, 200, 0);
+      return json({ ok: true, neis: !!env.NEIS_KEY, data: !!env.DATA_KEY, sheet: !!env.SHEET_URL, admin: !!env.ADMIN_PASSWORD, stats: !!env.STATS, now: kstNow() }, 200, 0);
     case '/api/towns':
       return json(Object.keys(TOWNS), 200, 86400);
     case '/api/schools':
@@ -486,6 +551,11 @@ async function handleApi(url, env) {
       return json(buildConfig(await getSheet(env)), 200, 600);
     case '/api/daily':
       return json(buildDaily(await getSheet(env), p.get('date'), p.get('grade') || '3'), 200, 600);
+    case '/api/hit':
+      if (request.method !== 'POST') return json({ error: 'POST만 돼요' }, 405);
+      return json(await recordHit(env, await request.json().catch(() => ({}))), 200, 0);
+    case '/api/admin/stats':
+      return json(await adminStats(env, request, p.get('days')), 200, 0);
     default:
       return json({ error: '없는 주소예요' }, 404);
   }
@@ -496,7 +566,7 @@ export default {
     const url = new URL(request.url);
     if (url.pathname.startsWith('/api/')) {
       try {
-        return await handleApi(url, env);
+        return await handleApi(url, env, request);
       } catch (e) {
         return json({ error: e.message || '오류가 났어요' }, e.status || 502);
       }

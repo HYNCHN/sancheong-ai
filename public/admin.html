@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>산청아이 관리자</title>
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="theme-color" content="#2E7D5B">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&display=swap">
+  <link rel="stylesheet" href="app.css">
+  <style>
+    #app { padding-bottom: 32px; }
+    .top { height: 150px; }
+    .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+    .tile { background: #fff; border: 1.5px solid var(--edge); box-shadow: 0 3px 0 var(--edge); border-radius: 20px; padding: 12px 12px 14px; }
+    .tile b { display: block; font-family: var(--display); font-weight: 400; font-size: 1.9rem; line-height: 1.1; color: var(--forest-deep); }
+    .tile span { font-size: .8rem; font-weight: 700; color: var(--ink-3); }
+    .chart { position: relative; }
+    .chart svg { width: 100%; height: auto; overflow: visible; }
+    .chart .grid line { stroke: var(--mist-2); }
+    .chart .axis text { fill: var(--ink-3); font-size: 10px; font-weight: 600; }
+    .chart .bar { fill: var(--forest); pointer-events: none; }
+    .chart .bar.today { fill: var(--gam); }
+    .chart .hit { fill: transparent; cursor: pointer; }
+    .chart .hit:hover + .bar, .chart .hit:focus + .bar { fill: var(--forest-deep); }
+    .tip { position: absolute; pointer-events: none; background: var(--ink); color: #fff; font-size: .82rem; font-weight: 700; padding: 5px 9px; border-radius: 9px; white-space: nowrap; transform: translate(-50%, -110%); }
+    .hbars { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+    .hbars li { display: grid; grid-template-columns: 7.2em 1fr 3.2em; align-items: center; gap: 10px; font-weight: 700; font-size: .92rem; }
+    .hbars .track { height: 14px; background: var(--mist); border-radius: 4px; overflow: hidden; }
+    .hbars .fill { height: 100%; background: var(--forest); border-radius: 0 4px 4px 0; min-width: 2px; }
+    .hbars .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .hbars .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .periodseg { margin-bottom: 14px; }
+    table.data { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    table.data th, table.data td { padding: 8px 6px; border-bottom: 1.5px solid var(--mist-2); text-align: right; font-variant-numeric: tabular-nums; }
+    table.data th:first-child, table.data td:first-child { text-align: left; }
+    table.data th { color: var(--ink-3); font-weight: 800; font-size: .82rem; }
+    details summary { cursor: pointer; font-weight: 800; color: var(--forest-deep); min-height: 44px; display: flex; align-items: center; }
+    .login { max-width: 360px; margin: 24px auto 0; }
+    .login input { width: 100%; border: 1.5px solid var(--edge); border-radius: 16px; padding: 13px 16px; margin: 6px 0 12px; background: #fff; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="top" id="top">
+      <div id="scene"></div>
+      <div class="top-inner">
+        <div class="top-date">선생님 전용</div>
+        <h1 class="top-hello">산청아이 관리자</h1>
+      </div>
+    </header>
+    <main id="view"></main>
+  </div>
+
+  <script src="art.js"></script>
+  <script>
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const now = new Date(Date.now() + 9 * 3600 * 1000);
+  $('#scene').innerHTML = jirisan({ hour: now.getUTCHours(), month: now.getUTCMonth() + 1, uid: 'adm' });
+  if (timeOfDay(now.getUTCHours()) === 'night') $('#top').classList.add('night');
+
+  let password = sessionStorage.getItem('sa-admin') || '';
+  let days = 30;
+
+  function showLogin(msg = '') {
+    $('#view').innerHTML = `<form class="card login" id="loginForm">
+      <h2 class="card-h">${ib('lock', 'forest')}비밀번호</h2>
+      <p class="small muted" style="margin:0">Cloudflare에 넣은 ADMIN_PASSWORD를 입력하세요.</p>
+      <input type="password" id="pw" autocomplete="current-password" required aria-label="비밀번호">
+      ${msg ? `<p class="err" style="margin:0 0 10px">${esc(msg)}</p>` : ''}
+      <button class="btn wide">들어가기</button></form>`;
+    $('#pw').focus();
+    $('#loginForm').onsubmit = (e) => { e.preventDefault(); password = $('#pw').value; load(); };
+  }
+
+  async function load() {
+    $('#view').innerHTML = '<div class="card"><div class="skeleton"></div><div class="skeleton"></div></div>';
+    let data;
+    try {
+      const res = await fetch(`/api/admin/stats?days=${days}`, { headers: { authorization: 'Bearer ' + password } });
+      data = await res.json();
+      if (!res.ok) { if (res.status === 401) { sessionStorage.removeItem('sa-admin'); return showLogin(data.error); } throw new Error(data.error); }
+    } catch (e) { $('#view').innerHTML = `<div class="card"><p class="err">${esc(e.message || '불러오지 못했어요')}</p></div>`; return; }
+    sessionStorage.setItem('sa-admin', password);
+    render(data);
+  }
+
+  const toDate = (s) => new Date(Date.UTC(+s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)));
+  const ymd = (d) => d.toISOString().slice(0, 10).replace(/-/g, '');
+  const label = (s) => `${+s.slice(4, 6)}/${+s.slice(6, 8)}`;
+  const DOW = ['일', '월', '화', '수', '목', '금', '토'];
+
+  function render(d) {
+    // 날짜를 빠짐없이 채우기 (0인 날 포함)
+    const dayList = [];
+    for (let t = toDate(d.from); ymd(t) <= d.to; t = new Date(t.getTime() + 86400000)) dayList.push(ymd(t));
+    const perDay = Object.fromEntries(dayList.map((x) => [x, 0]));
+    const perSchool = {}, perGrade = [0, 0, 0, 0, 0, 0, 0];
+    for (const r of d.rows) {
+      perDay[r.day] = (perDay[r.day] || 0) + r.n;
+      perSchool[r.name] = (perSchool[r.name] || 0) + r.n;
+      perGrade[r.grade] += r.n;
+    }
+    const total = Object.values(perDay).reduce((a, b) => a + b, 0);
+    const today = perDay[d.to] || 0;
+    const weekdays = dayList.filter((x) => { const w = toDate(x).getUTCDay(); return w >= 1 && w <= 5; });
+    const avg = weekdays.length ? Math.round(weekdays.reduce((a, x) => a + perDay[x], 0) / weekdays.length) : 0;
+
+    const schools = Object.entries(perSchool).sort((a, b) => b[1] - a[1]);
+    const maxS = Math.max(1, ...schools.map((s) => s[1]));
+    const maxG = Math.max(1, ...perGrade);
+
+    $('#view').innerHTML = `
+      <div class="seg periodseg" role="tablist">
+        ${[[7, '7일'], [30, '30일'], [90, '90일']].map(([n, t]) => `<button role="tab" aria-selected="${days === n}" data-days="${n}">${t}</button>`).join('')}
+      </div>
+      <div class="tiles">
+        <div class="tile"><b>${today}</b><span>오늘 연 휴대폰</span></div>
+        <div class="tile"><b>${avg}</b><span>평일 하루 평균</span></div>
+        <div class="tile"><b>${total}</b><span>${d.days}일 동안 연인원</span></div>
+      </div>
+      <div class="card">
+        <h2 class="card-h">${ib('cal', 'forest')}날짜별 접속</h2>
+        <div class="chart" id="dayChart">${dayChart(dayList, perDay)}</div>
+        <p class="small muted" style="margin:8px 0 0">주황 막대가 오늘이에요. 막대를 누르면 숫자가 보여요.</p>
+      </div>
+      <div class="card">
+        <h2 class="card-h">${ib('school', 'forest')}학교별</h2>
+        ${schools.length ? `<ul class="hbars">${schools.map(([n, v]) => `<li><span class="name" title="${esc(n)}">${esc(n.replace('초등학교', '초'))}</span><span class="track"><span class="fill" style="width:${(v / maxS) * 100}%; display:block"></span></span><span class="num">${v}</span></li>`).join('')}</ul>` : '<p class="empty">아직 기록이 없어요.</p>'}
+      </div>
+      <div class="card">
+        <h2 class="card-h">${ib('pencil', 'forest')}학년별</h2>
+        <ul class="hbars">${[1, 2, 3, 4, 5, 6].map((g) => `<li><span class="name">${g}학년</span><span class="track"><span class="fill" style="width:${(perGrade[g] / maxG) * 100}%; display:block"></span></span><span class="num">${perGrade[g]}</span></li>`).join('')}</ul>
+      </div>
+      <div class="card">
+        <details><summary>표로 보기</summary>
+          <table class="data"><thead><tr><th>날짜</th><th>접속</th></tr></thead><tbody>
+          ${dayList.slice().reverse().map((x) => `<tr><td>${label(x)} (${DOW[toDate(x).getUTCDay()]})</td><td>${perDay[x]}</td></tr>`).join('')}
+          </tbody></table>
+        </details>
+        <div class="row"><button class="btn ghost" id="csv">엑셀용 파일(CSV) 내려받기</button><button class="btn line" id="logout">나가기</button></div>
+      </div>
+      <p class="foot">하루에 한 휴대폰을 한 번만 세요. 같은 학생이 여러 날 열면 날마다 한 번씩 세어져요.<br>이름·기기 번호·접속 주소는 저장하지 않아요.</p>`;
+
+    document.querySelectorAll('[data-days]').forEach((b) => b.onclick = () => { days = +b.dataset.days; load(); });
+    $('#logout').onclick = () => { sessionStorage.removeItem('sa-admin'); password = ''; showLogin(); };
+    $('#csv').onclick = () => {
+      const lines = ['날짜,학교,학년,접속 수', ...d.rows.map((r) => `${r.day.slice(0, 4)}-${r.day.slice(4, 6)}-${r.day.slice(6)},${r.name},${r.grade},${r.n}`)];
+      const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: `산청아이_이용통계_${d.from}-${d.to}.csv` });
+      a.click(); URL.revokeObjectURL(a.href);
+    };
+    wireTips();
+  }
+
+  /** 날짜별 막대 (한 가지 색, 바닥에 붙고 위쪽만 둥글게) */
+  function dayChart(list, perDay) {
+    const W = 340, H = 150, L = 26, B = 22, T = 8;
+    const max = Math.max(4, ...list.map((x) => perDay[x]));
+    const step = niceStep(max);
+    const top = Math.ceil(max / step) * step;
+    const bw = (W - L) / list.length;
+    const y = (v) => T + (H - T - B) * (1 - v / top);
+    const ticks = []; for (let v = 0; v <= top; v += step) ticks.push(v);
+    const every = Math.ceil(list.length / 6);
+    const bars = list.map((x, i) => {
+      const v = perDay[x], bx = L + i * bw + Math.max(1, bw * 0.15), w = Math.max(2, bw * 0.7), by = y(v), h = H - B - by;
+      const r = Math.min(4, w / 2, h);
+      const path = h <= 0 ? '' : `M${bx} ${H - B}V${by + r}q0 -${r} ${r} -${r}h${w - 2 * r}q${r} 0 ${r} ${r}V${H - B}z`;
+      return `<rect class="hit" x="${L + i * bw}" y="${T}" width="${bw}" height="${H - B - T}" tabindex="0" data-tip="${label(x)} (${DOW[toDate(x).getUTCDay()]}) · ${v}명" aria-label="${label(x)} ${v}명"/><path class="bar${i === list.length - 1 ? ' today' : ''}" d="${path}"/>`
+        + (i % every === 0 || i === list.length - 1 ? `<text x="${L + i * bw + bw / 2}" y="${H - 6}" text-anchor="middle">${label(x)}</text>` : '');
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="날짜별 접속 수 막대그래프">
+      <g class="grid">${ticks.map((v) => `<line x1="${L}" x2="${W}" y1="${y(v)}" y2="${y(v)}"/>`).join('')}</g>
+      <g class="axis">${ticks.map((v) => `<text x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${v}</text>`).join('')}</g>
+      <g class="axis">${bars}</g></svg>`;
+  }
+  function niceStep(max) {
+    const raw = max / 4, p = Math.pow(10, Math.floor(Math.log10(raw))), n = raw / p;
+    return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p;
+  }
+  function wireTips() {
+    const box = $('#dayChart');
+    if (!box) return;
+    const tip = document.createElement('div'); tip.className = 'tip'; tip.hidden = true; box.appendChild(tip);
+    const show = (el) => {
+      const r = el.getBoundingClientRect(), br = box.getBoundingClientRect();
+      tip.textContent = el.dataset.tip; tip.hidden = false;
+      tip.style.left = Math.min(Math.max(r.left - br.left + r.width / 2, 50), br.width - 50) + 'px';
+      tip.style.top = (r.top - br.top + 8) + 'px';
+    };
+    box.querySelectorAll('.hit').forEach((el) => {
+      el.addEventListener('mouseenter', () => show(el)); el.addEventListener('focus', () => show(el));
+      el.addEventListener('click', () => show(el));
+      el.addEventListener('mouseleave', () => tip.hidden = true); el.addEventListener('blur', () => tip.hidden = true);
+    });
+  }
+
+  password ? load() : showLogin();
+  </script>
+</body>
+</html>

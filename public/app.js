@@ -3,7 +3,7 @@
  */
 'use strict';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -413,6 +413,7 @@ function viewMore(el) {
     <p>산청아이는 이름, 전화번호, 위치 같은 개인정보를 받지 않아요.</p>
     <p>고른 학교·학년·반·읍면, 글자 크기, 알레르기 표시는 <b>이 휴대폰 안에만</b> 저장돼요. 앱을 지우거나 브라우저 기록을 지우면 함께 지워져요.</p>
     <p>시간표·급식·날씨를 불러올 때 학교·학년·반·읍면 정보만 서버로 보내고, 서버는 이것을 따로 저장하지 않아요.</p>
+    <p>앱을 더 좋게 만들기 위해 '날짜·학교·학년별로 오늘 앱을 연 휴대폰 수'만 숫자로 세요. 누구의 휴대폰인지는 알 수 없어요.</p>
     ${config.contact ? `<p>문의: ${esc(config.contact)}</p>` : ''}
     <button class="btn wide" data-close>확인</button>`);
 }
@@ -563,6 +564,7 @@ async function renderOnboarding() {
       mealDay = null; schoolWeek = 0;
       location.hash = '#/home';
       endOnboarding();
+      sendHit();
     };
   }
 }
@@ -586,7 +588,17 @@ function route() {
 }
 
 window.addEventListener('hashchange', route);
-document.addEventListener('visibilitychange', () => { if (!document.hidden && profile) { renderTop(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && profile) { sendHit(); } });
+
+/** 익명 이용 통계: 하루에 한 번만 '오늘 열었어요'를 알림 (학교 코드·학년만) */
+function sendHit() {
+  if (!profile) return;
+  const today = ymd(kst().date);
+  if (store.get('hitDay') === today) return;
+  fetch('/api/hit', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ school: profile.school.code, grade: profile.grade }) })
+    .then((r) => { if (r.ok) store.set('hitDay', today); })
+    .catch(() => {});
+}
 
 (async function init() {
   applySeason();
@@ -594,4 +606,5 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden && pr
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   await loadConfig();
   route();
+  sendHit();
 })();
