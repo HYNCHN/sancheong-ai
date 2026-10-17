@@ -306,21 +306,52 @@ export function dustGrade(kind, v) {
   return v <= cut[0] ? 1 : v <= cut[1] ? 2 : v <= cut[2] ? 3 : 4; // 1좋음 2보통 3나쁨 4매우나쁨
 }
 
+/** 에어코리아 호출: 오류면 이유를 담아서 알려 줌 */
+async function airCall(env, op, params) {
+  const q = new URLSearchParams({ returnType: 'json', pageNo: '1', ver: '1.0', ...params });
+  const url = `https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/${op}?serviceKey=${serviceKey(env)}&${q}`;
+  const res = await fetch(url);
+  const text = await res.text();
+  let data;
+  try { data = JSON.parse(text); } catch {
+    // 인증키 문제 등은 XML로 옴 → 안에 적힌 이유를 꺼냄
+    const pick = (tag) => (text.match(new RegExp(`<${tag}>([^<]+)<`)) || [])[1];
+    const raw = pick('returnAuthMsg') || pick('resultMsg') || pick('errMsg') || `HTTP ${res.status}`;
+    const why = {
+      SERVICE_KEY_IS_NOT_REGISTERED_ERROR: '인증키가 아직 이 서비스에 등록되지 않았어요',
+      SERVICE_ACCESS_DENIED_ERROR: '이 서비스 활용신청이 안 되어 있어요',
+      LIMITED_NUMBER_OF_SERVICE_REQUESTS_EXCEEDS_ERROR: '오늘 호출 한도를 넘었어요',
+    }[raw] || raw;
+    throw new Error(`에어코리아 오류: ${why} (활용신청 승인 직후라면 몇 시간 뒤 다시 확인)`);
+  }
+  const head = data?.response?.header;
+  if (head?.resultCode !== '00') throw new Error(`에어코리아 오류 ${head?.resultCode || ''} ${head?.resultMsg || ''}`.trim());
+  return data.response.body.items || [];
+}
+
+const hasValue = (r) => r && ((r.pm10Value && r.pm10Value !== '-') || (r.pm25Value && r.pm25Value !== '-'));
+// 산청 측정소를 못 찾으면 가까운 곳 순서로
+const NEAR = ['산청', '함양', '진주', '하동', '합천', '거창', '의령'];
+
 async function getAir(env, station) {
   return cached(`air:${station}`, 1800, async () => {
-    const url = `https://apis.data.go.kr/B552584/ArpltnInforInqireSvc/getMsrstnAcctoRltmMesureDnsty?serviceKey=${serviceKey(env)}`
-      + `&returnType=json&numOfRows=5&pageNo=1&stationName=${encodeURIComponent(station)}&dataTerm=DAILY&ver=1.0`;
-    const text = await (await fetch(url)).text();
-    let data;
-    try { data = JSON.parse(text); } catch { throw new Error('에어코리아 응답 오류 (인증키 확인 필요)'); }
-    const code = data?.response?.header?.resultCode;
-    if (code !== '00') throw new Error(`에어코리아 오류 ${code}`);
-    const list = data.response.body.items || [];
-    const row = list.find((r) => r.pm10Value !== '-' || r.pm25Value !== '-') || list[0];
+    // 1) 관리 시트에 적힌 측정소 이름으로
+    let rows = station ? await airCall(env, 'getMsrstnAcctoRltmMesureDnsty', { numOfRows: '5', stationName: station, dataTerm: 'DAILY' }) : [];
+    let row = rows.find(hasValue);
+    let name = station;
+    // 2) 없으면 경남 전체 측정소에서 산청(없으면 가까운 곳)을 찾음
+    if (!row) {
+      const all = await airCall(env, 'getCtprvnRltmMesureDnsty', { numOfRows: '200', sidoName: '경남' });
+      for (const key of NEAR) {
+        row = all.find((r) => String(r.stationName || '').includes(key) && hasValue(r));
+        if (row) break;
+      }
+      name = row?.stationName || station;
+    }
     if (!row) return null;
     const pm10 = parseInt(row.pm10Value), pm25 = parseInt(row.pm25Value);
     return {
-      station, time: row.dataTime,
+      station: name, time: row.dataTime,
       pm10: isNaN(pm10) ? null : pm10, pm25: isNaN(pm25) ? null : pm25,
       pm10Grade: parseInt(row.pm10Grade) || dustGrade('pm10', pm10),
       pm25Grade: parseInt(row.pm25Grade) || dustGrade('pm25', pm25),
