@@ -362,7 +362,7 @@ async function getAir(env, station) {
 /* ---------------- 관리 시트 ---------------- */
 
 // 각 탭의 제목 줄을 찾는 기준 (첫 칸 이름)
-const HEADERS = ['항목', '번호', '날짜', '최고기온 이상(℃)', '조건코드', '학교명', '순서'];
+const HEADERS = ['항목', '번호', '날짜', '최고기온 이상(℃)', '조건코드', '학교명', '순서', '기수'];
 
 /** 탭(2차원 배열) → 제목 줄을 찾아 객체 목록으로 */
 export function tableToRows(table) {
@@ -466,8 +466,13 @@ export function buildConfig(sheet, k = kstNow()) {
   for (const r of sheet['날씨_추가안내'] || []) if (useOk(r) && r['조건코드']) tips[r['조건코드']] = r['문구'];
   const schools = {};
   for (const r of sheet['학교추가정보'] || []) if (useOk(r) && r['학교명']) schools[r['학교명']] = { intro: r['소개'], pride: r['자랑거리·특색 활동'] };
+  const credits = (sheet['만든사람들'] || []).filter((r) => useOk(r) && r['기수'] && r['이름']).map((r) => ({
+    gen: r['기수'], year: r['연도'] || '', note: r['설명'] || '',
+    names: r['이름'].split(/[·,、\s]+/).map((n) => n.trim()).filter(Boolean),
+  }));
   return {
     notice,
+    credits,
     contact: settings['문의_연락처'] || '',
     feedbackUrl: settings['의견_주소'] || '',
     airStation: settings['미세먼지_측정소'] || '산청읍',

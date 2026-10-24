@@ -246,3 +246,11 @@ a.card:active, .tap:active { transform: translateY(2px); box-shadow: 0 1px 0 var
   .switch, .switch::after { transition: none; }
 }
 .outfit img.friend + .shirt { display: none; }
+
+/* 만든 사람들 */
+.credits .gen { margin-top: 18px; padding-top: 16px; border-top: 1.5px dashed var(--edge); }
+.credits .gen-h { display: flex; align-items: baseline; gap: 10px; margin: 0 0 12px; }
+.credits .gen-h b { font-family: var(--display); font-weight: 400; font-size: 1.5rem; color: var(--forest-deep); }
+.credits .gen-h span { font-weight: 800; color: var(--ink-3); }
+.credits .names { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.credits .names li { background: var(--forest-soft); color: var(--forest-deep); font-weight: 800; border-radius: 999px; padding: 8px 16px; font-size: 1.02rem; }

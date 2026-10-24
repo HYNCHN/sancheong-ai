@@ -3,7 +3,7 @@
  */
 'use strict';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -390,6 +390,27 @@ async function viewStudy(el) {
   }
 }
 
+/* ---------------- 화면: 만든 사람들 ---------------- */
+// 관리 시트 '만든사람들' 탭이 있으면 그 내용을, 없으면 아래 기본값을 보여 줘요.
+const CREDITS_DEFAULT = [{ gen: '1기', year: '2026', names: ['김하준', '이서준', '이승원', '신주훈', '정다온'] }];
+const COPYRIGHT = '© 2026 산청아이(AI) 만든 사람들';
+
+function viewCredits(el) {
+  const list = (config.credits && config.credits.length ? config.credits : CREDITS_DEFAULT);
+  el.innerHTML = `
+    <div class="card credits">
+      <h2 class="card-h">${ib('star', 'gam')}만든 사람들</h2>
+      <p class="small muted" style="margin:0 0 4px">산청 친구들을 위해 이 앱을 함께 만들었어요.</p>
+      ${list.map((c) => `
+        <div class="gen">
+          <p class="gen-h"><b>${esc(c.gen)}</b>${c.year ? `<span>${esc(c.year)}</span>` : ''}</p>
+          <ul class="names">${c.names.map((n) => `<li>${esc(n)}</li>`).join('')}</ul>
+          ${c.note ? `<p class="small muted" style="margin:8px 0 0">${esc(c.note)}</p>` : ''}
+        </div>`).join('')}
+    </div>
+    <p class="foot">${COPYRIGHT}</p>`;
+}
+
 /* ---------------- 화면: 더보기 ---------------- */
 function viewMore(el) {
   el.innerHTML = `
@@ -399,12 +420,13 @@ function viewMore(el) {
       <li><button id="mAllergy">${ib('alert', 'gam')}<span class="lbl">내 알레르기 표시</span><span class="chev">${(prefs.allergies || []).length ? prefs.allergies.length + '개' : ''}${ic('chev')}</span></button></li>
     </ul></div>
     <div class="card"><ul class="list">
+      <li><a href="#/credits">${ib('star', 'gam')}<span class="lbl">만든 사람들</span><span class="chev">${ic('chev')}</span></a></li>
       <li><button id="mTour">${ib('guide', 'sky')}<span class="lbl">사용법 다시 보기</span><span class="chev">${ic('chev')}</span></button></li>
       ${config.feedbackUrl ? `<li><a href="${esc(feedbackLink())}" target="_blank" rel="noopener">${ib('mail', 'gam')}<span class="lbl">의견 보내기</span><span class="chev">${ic('chev')}</span></a></li>` : ''}
       <li><button id="mPrivacy">${ib('lock', 'forest')}<span class="lbl">개인정보 안내</span><span class="chev">${ic('chev')}</span></button></li>
       ${config.contact ? `<li><a href="tel:${esc(config.contact)}">${ib('phone', 'ridge')}<span class="lbl">문의 ${esc(config.contact)}</span><span class="chev">${ic('chev')}</span></a></li>` : ''}
     </ul></div>
-    <p class="foot">산청아이 ${VERSION} · 정보 출처: 나이스 교육정보 개방포털, 기상청, 에어코리아</p>`;
+    <p class="foot">산청아이 ${VERSION} · 정보 출처: 나이스 교육정보 개방포털, 기상청, 에어코리아<br>${COPYRIGHT}</p>`;
   $('#mProfile').onclick = () => startOnboarding(1);
   $('#mLarge').onclick = () => { prefs.large = !prefs.large; store.set('prefs', prefs); applySeason(); viewMore(el); };
   $('#mAllergy').onclick = pickAllergies;
@@ -574,7 +596,7 @@ function route() {
   if (!profile) { startOnboarding(0); return; }
   const [, tab = 'home', sub] = (location.hash || '#/home').split('/');
   const el = $('#view');
-  document.querySelectorAll('#tabbar a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.tab === tab || (tab === 'weather' && a.dataset.tab === 'home')));
+  document.querySelectorAll('#tabbar a').forEach((a) => a.toggleAttribute('aria-current', a.dataset.tab === tab || (tab === 'weather' && a.dataset.tab === 'home') || (tab === 'credits' && a.dataset.tab === 'more')));
   document.querySelectorAll('#tabbar a').forEach((a) => { if (a.hasAttribute('aria-current')) a.setAttribute('aria-current', 'page'); });
   $('#tabbar [data-tab="school"]').hidden = !config.menus.school;
   $('#tabbar [data-tab="study"]').hidden = !config.menus.study;
@@ -584,6 +606,7 @@ function route() {
   if (tab === 'weather' && config.menus.weather) return viewWeather(el);
   if (tab === 'study' && config.menus.study) return viewStudy(el);
   if (tab === 'more') return viewMore(el);
+  if (tab === 'credits') return viewCredits(el);
   return viewHome(el);
 }
 
